@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import re
 
 # 设置网页标题与布局
 st.set_page_config(page_title="语音数据智能分析工具", layout="wide")
 
 st.title("📊 南京金鹰世界G酒店-语音运营数据分析")
-st.markdown("页面已完成样式与话术的 1:1 深度复刻，并无缝打通 **24小时分时段大盘接通率** 的跨空间联动对账。")
+st.markdown("页面已完成样式与话术的 1:1 深度复刻，并升级了【智能时间解析引擎】防止时段熔断。")
 
 # ----------------- 🛠️ 数据矩阵上传区 -----------------
 st.markdown("### 📥 数据矩阵上传中心")
@@ -49,6 +50,23 @@ def clean_hour_val(val):
             return h
     except:
         pass
+    return None
+
+
+def extract_hour_from_datetime(val):
+    """兜底时间提取：从 '2026-04-15 23:55:40' 中智能切出 23 点"""
+    if pd.isna(val):
+        return None
+    val_str = str(val).strip()
+    # 尝试匹配含有 24小时制 HH:MM:SS 的结构
+    match = re.search(r'(\d{2}):\d{2}:\d{2}', val_str)
+    if match:
+        try:
+            h = int(match.group(1))
+            if 0 <= h <= 23:
+                return h
+        except:
+            pass
     return None
 
 
@@ -107,12 +125,19 @@ def process_data(df_call, df_ext):
             
     df_call['接通方式'] = df_call.apply(check_connect_type, axis=1)
     
-    # 清洗定位“呼叫所在小时”
-    hour_col = [c for c in df_call.columns if '小时' in c or '时段' in c]
+    # 🚀「双重保险」时段智能提取解析器
+    # 优先找明确标有“小时”或“时段”的独立列
+    hour_col = [c for c in df_call.columns if '小时' in c or '时段' in c or 'hour' in c.lower()]
     if hour_col:
         df_call['⚡标准时段'] = df_call[hour_col[0]].apply(clean_hour_val)
     else:
         df_call['⚡标准时段'] = None
+        
+    # 如果没找到时段列，或者解析出来全是空的，用“呼叫时间”列执行时间正则拆分兜底
+    if df_call['⚡标准时段'].isna().all() or df_call['⚡标准时段'].isnull().all():
+        time_col = [c for c in df_call.columns if '时间' in c or 'date' in c.lower() or 'time' in c.lower()]
+        if time_col:
+            df_call['⚡标准时段'] = df_call[time_col[0]].apply(extract_hour_from_datetime)
         
     df_call = df_call.drop(columns=['主叫号码_clean'])
     return df_call
@@ -179,7 +204,7 @@ if uploaded_post_file and uploaded_ext_file:
                 # 建立 24 小时空底表用于分时段对账
                 hourly_summary = pd.DataFrame({"时段": [f"{i}:00" for i in range(24)], "⚡H_int": list(range(24))})
                 
-                # 上线后分时聚合
+                # 上线后分时放量聚合
                 df_h_post = df_rooms_post[df_rooms_post['⚡标准时段'].notna()]
                 post_h_total = df_h_post[df_h_post['接通方式'].isin(valid_tags)].groupby('⚡标准时段').size()
                 post_h_success = df_h_post[df_h_post['最终成功接通'] == '是'].groupby('⚡标准时段').size()
@@ -208,21 +233,19 @@ if uploaded_post_file and uploaded_ext_file:
                             saved_calls = int(round(total_calls * lift_value))
                             saved_calls_str = f"{saved_calls}.0"
                         
-                        # 上线前分时聚合
+                        # 上线前分时放量聚合
                         df_h_pre = df_rooms_pre[df_rooms_pre['⚡标准时段'].notna()]
                         pre_h_success = df_h_pre[df_h_pre['人工通话状态_clean'] == '接通'].groupby('⚡标准时段').size()
                         pre_h_failed = df_h_pre[df_h_pre['人工通话状态_clean'] == '未接通'].groupby('⚡标准时段').size()
                         pre_h_total = pre_h_success + pre_h_failed
                 
-                # 组装 24 小时联动看板矩阵
+                # 组装 24 小时历史对比矩阵
                 def get_rates(row):
                     h = row['⚡H_int']
-                    # 上线前（人工）
                     pre_t = pre_h_total.get(h, 0) if 'pre_h_total' in locals() else 0
                     pre_s = pre_h_success.get(h, 0) if 'pre_h_success' in locals() else 0
                     rate_pre = f"{pre_s / pre_t:.1%}" if pre_t > 0 else "--"
                     
-                    # 上线后（人工+AI）
                     post_t = post_h_total.get(h, 0)
                     post_s = post_h_success.get(h, 0)
                     rate_post = f"{post_s / post_t:.1%}" if post_t > 0 else "--"
@@ -256,11 +279,11 @@ if uploaded_post_file and uploaded_ext_file:
                 
                 st.markdown("---")
                 
-                # 渲染 24 小时分析模块
+                # 24小时表格展现
                 st.markdown("#### ⏰ 24小时分时段接通率精细分析情况")
                 st.dataframe(hourly_display, use_container_width=True)
                 
-                # 汇总报表导出
+                # 导出文件
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     hourly_display.to_excel(writer, sheet_name="24小时分时段看板", index=False)
@@ -274,7 +297,8 @@ if uploaded_post_file and uploaded_ext_file:
                     file_name="南京金鹰世界G酒店_时段复盘全量报告.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-            
+            else:
+                st.error("❌ 详单解析失败，请检查‘主叫号码’、‘通话状态’、‘AI通话状态’、‘人工通话状态’等必填核心列名是否完全吻合。")
         except Exception as e:
             st.error(f"分析处理发生非预期异常: {e}")
 else:
