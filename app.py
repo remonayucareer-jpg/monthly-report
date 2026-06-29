@@ -6,8 +6,8 @@ import io
 # 设置网页标题与布局
 st.set_page_config(page_title="语音数据智能分析工具", layout="wide")
 
-st.title("📊 语音运营数据智能计算中心 - Part 2 (多功能看板版)")
-st.markdown("上传基础表格后，系统将自动计算**总来电量**等核心指标，并支持导出多工作表(Multi-Sheets)的 Excel 文件。")
+st.title("📊 语音运营数据智能计算中心 - Part 2 (多指标看板版)")
+st.markdown("上传基础表格后，系统将自动计算**总来电量**及**纯人工接通率**等核心指标，并支持导出多工作表 Excel。")
 
 # 创建上传组件
 col1, col2 = st.columns(2)
@@ -100,7 +100,7 @@ def process_data(df_call, df_ext):
 
 # --- 网页交互与指标展示 ---
 if uploaded_call_file and uploaded_ext_file:
-    with st.spinner("正在依据新模版逻辑精确计算中..."):
+    with st.spinner("正在依据模版逻辑精确计算中..."):
         try:
             if uploaded_call_file.name.endswith('.csv'):
                 df_call = pd.read_csv(uploaded_call_file)
@@ -112,61 +112,83 @@ if uploaded_call_file and uploaded_ext_file:
             else:
                 df_ext = pd.read_excel(uploaded_ext_file)
             
-            # 获取计算后的详单结果
+            # 获取底表数据
             df_result = process_data(df_call, df_ext)
             
             if df_result is not None:
                 st.success("🎉 数据扩充及核心指标计算成功！")
                 
-                # --- 【新增模块】运营核心指标看板展示 ---
+                # --- 【核心计算】指标提取 ---
+                # 过滤出只有客房接入的数据作为计算基准
+                df_rooms = df_result[df_result['房间是否接入'] == '客房']
+                
+                # 指标 1：总来电量
+                total_calls = int(len(df_rooms))
+                
+                # 新增指标 2：整体接通率（人工）相关计算
+                # 严格按照“人工通话状态”这一列的值进行过滤和清洗
+                df_rooms['人工通话状态_clean'] = df_rooms['人工通话状态'].astype(str).str.strip()
+                
+                man_success = int((df_rooms['人工通话状态_clean'] == '接通').sum())
+                man_failed = int((df_rooms['人工通话状态_clean'] == '未接通').sum())
+                man_total = man_success + man_failed
+                
+                # 计算接通率（防止分母为 0 导致报错）
+                man_connect_rate = man_success / man_total if man_total > 0 else 0.0
+                man_connect_rate_str = f"{man_connect_rate:.2%}" if man_total > 0 else "--"
+                
+                # --- 【前端渲染】运营核心需求指标看板 ---
                 st.markdown("## 📈 运营核心需求指标看板")
                 
-                # 计算核心指标 1：总来电量 = COUNTIF(云总机通话详单!AL:AL, "客房")
-                total_calls = int((df_result['房间是否接入'] == '客房').sum())
-                
-                # 排版展现指标卡片
+                # 使用 Streamlit 原生卡片并排展示
                 m_col1, m_col2, m_col3 = st.columns(3)
                 with m_col1:
-                    st.metric(label="📞 总来电量 (所有启用AI的客房呼出量)", value=f"{total_calls} 次")
+                    st.metric(label="📞 总来电量", value=f"{total_calls} 次")
                 with m_col2:
-                    st.metric(label="🤖 进入AI运营状态", value="已激活")
+                    st.metric(label="👥 整体接通率（人工）", value=man_connect_rate_str, help=f"计算基础：人工接通数({man_success}) / 人工总数({man_total})")
                 with m_col3:
-                    st.metric(label="📊 校验状态", value="与处理模版 100% 对齐")
+                    st.metric(label="📊 人工承接话务量", value=f"{man_total} 次", help=f"包含接通 {man_success} 次，未接通 {man_failed} 次")
                 
-                # 后面可以继续并排扩充：进入AI电话量、接通率等指标卡
                 st.markdown("---")
                 
-                # 创建指标汇总表，准备写入 Excel 的 Sheet 1
+                # --- 【数据导出】创建指标汇总表，准备写入 Excel 的首页 ---
                 df_summary = pd.DataFrame({
-                    "核心运营指标": ["总来电量（所有启用AI的客房呼出的电话量）"],
-                    "计算数值": [total_calls],
-                    "计算公式/口径": ["=COUNTIF(云总机通话详单!房间是否接入, '客房')"]
+                    "核心运营指标名称": [
+                        "总来电量（所有启用AI的客房呼出的电话量）", 
+                        "整体接通率（人工）"
+                    ],
+                    "当前计算数值": [
+                        total_calls, 
+                        man_connect_rate_str
+                    ],
+                    "计算口径/公式": [
+                        "=COUNTIF(详单!房间是否接入, '客房')", 
+                        f"人工接通({man_success}) / [人工接通({man_success}) + 人工未接通({man_failed})]"
+                    ]
                 })
                 
-                # --- 【新增模块】内存中构建多 Sheet 的 XLSX 电子表格 ---
+                # 在内存中构建多 Sheet 的 XLSX 电子表格
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                    # Sheet 1: 汇总看板页
                     df_summary.to_excel(writer, sheet_name="核心运营报告首页", index=False)
-                    # Sheet 2: 数据明细页
                     df_result.to_excel(writer, sheet_name="云总机通话详单", index=False)
                 excel_data = excel_buffer.getvalue()
                 
-                # 提供高级 XLSX 文件下载按钮
+                # 提供高级 XLSX 文件下载
                 st.download_button(
-                    label="📥 下载完整运营报告 (包含指标首页 + 通话详单 Sheet)",
+                    label="📥 下载完整运营报告 (包含最新人工接通率)",
                     data=excel_data,
-                    file_name="语音运营分析复盘报告.xlsx",
+                    file_name="语音运营分析复盘报告_v2.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
                 
                 # 预览详单数据
                 with st.expander("🔍 点击展开查看底表详单数据预览 (前 5 行)"):
                     all_cols = list(df_result.columns)
-                    preview_cols = [c for c in ['酒店名称', '主叫号码', '通话状态', '房间是否接入', '最终成功接通', '接通方式', '呼叫所在日期', '呼叫所在小时'] if c in all_cols]
+                    preview_cols = [c for c in ['酒店名称', '主叫号码', '通话状态', '人工通话状态', '房间是否接入', '最终成功接通', '接通方式'] if c in all_cols]
                     st.dataframe(df_result[preview_cols].head(5), use_container_width=True)
             
         except Exception as e:
             st.error(f"处理发生非预期错误: {e}")
 else:
-    st.info("💡 提示：请在上方上传表格，系统会自动根据复盘模版生成首页看板。")
+    st.info("💡 提示：请在上方上传表格，系统会自动根据复盘模版生成最新的多指标看板。")
