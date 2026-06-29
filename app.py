@@ -7,7 +7,7 @@ import io
 st.set_page_config(page_title="语音数据智能分析工具", layout="wide")
 
 st.title("📊 语音运营数据智能计算中心")
-st.markdown("页面已做极致精简。因【上线前】与【上线后】数据存在时间差，系统已为您开辟**独立计算空间**，避免数据污染。")
+st.markdown("页面已做极致精简。系统已为您打通【上线前】与【上线后】双空间对账逻辑，直观呈现数字化转型效益。")
 
 # ----------------- 🛠️ 空间分流上传区 -----------------
 st.markdown("### 📥 数据矩阵上传中心")
@@ -52,7 +52,7 @@ def process_data(df_call, df_ext):
         lambda x: '客房' if (x and x in valid_extensions) else '--'
     )
     
-    # 判定最终成功接通（指标5分子依赖此逻辑：最终成功接通 == '是'）
+    # 判定最终成功接通
     def check_final_success(row):
         if row['房间是否接入'] != '客房':
             return '--'
@@ -96,7 +96,7 @@ def process_data(df_call, df_ext):
 
 # ----------------- 📈 核心指标看板渲染 -----------------
 if uploaded_post_file and uploaded_ext_file:
-    with st.spinner("各时段独立空间指标解耦计算中..."):
+    with st.spinner("双时段联动对账中..."):
         try:
             # 1. 加载分机表
             if uploaded_ext_file.name.endswith('.csv'):
@@ -106,7 +106,7 @@ if uploaded_post_file and uploaded_ext_file:
             df_ext.columns = df_ext.columns.astype(str).str.strip()
             df_ext['分机号_clean'] = df_ext['分机号'].apply(clean_to_int_str)
             
-            # 2. 算【上线后】的数据
+            # 2. 计算【上线后】时段数据
             if uploaded_post_file.name.endswith('.csv'):
                 df_post_raw = pd.read_csv(uploaded_post_file)
             else:
@@ -117,7 +117,7 @@ if uploaded_post_file and uploaded_ext_file:
             if df_post_res is not None:
                 df_rooms_post = df_post_res[df_post_res['房间是否接入'] == '客房']
                 
-                # 指标 1：总来电量（6个标签组合验证）
+                # 指标 1：总来电量（6标签合集）
                 connect_types = df_rooms_post['接通方式'].astype(str).str.strip()
                 valid_tags = [
                     '进入AI后，AI直接完成，未转接人工', 
@@ -129,24 +129,28 @@ if uploaded_post_file and uploaded_ext_file:
                 ]
                 total_calls = int(connect_types.isin(valid_tags).sum())
                 
-                # 指标 2：AI接通率计算
+                # 指标 2：AI接通率
                 df_rooms_post['AI通话状态_clean'] = df_rooms_post['AI通话状态'].astype(str).str.strip()
                 ai_success = int((df_rooms_post['AI通话状态_clean'] == '接通').sum())
                 ai_total = int(df_rooms_post['AI通话状态_clean'].isin(['接通', '未接通']).sum())
                 ai_rate_str = f"{ai_success / ai_total:.2%}" if ai_total > 0 else "--"
                 is_ai_abnormal = (ai_success != ai_total)
                 
-                # 指标 3：上线后人工接通率（新精细口径）
+                # 指标 3：上线后人工接通率
                 man_success_post = int((connect_types.isin(['进入AI后，再转接人工，且人工接通', '直接进入人工，且人工接通'])).sum())
                 man_total_post = int((connect_types.isin(['进入AI后，再转接人工，且人工接通', '直接进入人工，且人工接通', 'AI接通，转接人工，人工未接通', '直接进入人工且最终未接通'])).sum())
                 online_man_rate_str = f"{man_success_post / man_total_post:.2%}" if man_total_post > 0 else "--"
                 
-                # ⭐新指标 4：上线后整体接通率（人工+AI）
+                # 指标 4：上线后整体接通率（人工+AI）
                 final_success_count = int((df_rooms_post['最终成功接通'] == '是').sum())
-                overall_post_rate_str = f"{final_success_count / total_calls:.2%}" if total_calls > 0 else "--"
+                overall_post_rate = final_success_count / total_calls if total_calls > 0 else 0.0
+                overall_post_rate_str = f"{overall_post_rate:.2%}" if total_calls > 0 else "--"
                 
-                # 指标 5：上线前整体接通率（人工原口径）
+                # 指标 5 & 6：上线前历史数据及【提升率】跨时段联动
                 pre_man_rate_str = "--"
+                lift_rate_str = "--"
+                lift_value = None
+                
                 if uploaded_pre_file:
                     if uploaded_pre_file.name.endswith('.csv'):
                         df_pre_raw = pd.read_csv(uploaded_pre_file)
@@ -160,16 +164,23 @@ if uploaded_post_file and uploaded_ext_file:
                         pre_success = int((df_rooms_pre['人工通话状态_clean'] == '接通').sum())
                         pre_failed = int((df_rooms_pre['人工通话状态_clean'] == '未接通').sum())
                         pre_total = pre_success + pre_failed
-                        pre_man_rate_str = f"{pre_success / pre_total:.2%}" if pre_total > 0 else "--"
+                        
+                        if pre_total > 0:
+                            overall_pre_rate = pre_success / pre_total
+                            pre_man_rate_str = f"{overall_pre_rate:.2%}"
+                            
+                            # ✨核心计算：提升率 = 上线后整体 - 上线前历史人工
+                            lift_value = overall_post_rate - overall_pre_rate
+                            lift_rate_str = f"{lift_value:+.2%}"  # 自动带上 +/- 号
                 
-                # --- 纯净版前端渲染（横向平铺 5 个指标卡片） ---
-                st.success("🎉 数据计算完成，以下为精简运营核心看板：")
+                # --- 纯净版前端渲染（顶部4个基本指标 + 底部2个对比指标） ---
+                st.success("🎉 数据矩阵整合成功！")
                 
-                col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(5)
-                
+                # 第一排：上线后核心现状
+                st.markdown("#### 📱 上线后核心运营状态")
+                col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
                 with col_kpi1:
-                    st.metric(label="📞 总来电量 (上线后)", value=f"{total_calls} 次", help="由6个接通场景标签汇总所得")
-                    
+                    st.metric(label="📞 总来电量", value=f"{total_calls} 次")
                 with col_kpi2:
                     if is_ai_abnormal:
                         st.markdown(
@@ -181,54 +192,61 @@ if uploaded_post_file and uploaded_ext_file:
                         )
                     else:
                         st.metric(label="🤖 AI接通率", value=ai_rate_str)
-                        
                 with col_kpi3:
-                    st.metric(label="🎧 人工接通率 (上线后)", value=online_man_rate_str)
-                    
+                    st.metric(label="🎧 人工接通率 (精细口径)", value=online_man_rate_str)
                 with col_kpi4:
-                    st.metric(
-                        label="🌐 整体接通率 (人工+AI)", 
-                        value=overall_post_rate_str,
-                        help=f"计算逻辑：最终成功接通数({final_success_count}) / 6个标签总电量({total_calls})"
-                    )
-                    
+                    st.metric(label="🌐 整体接通率 (人工+AI)", value=overall_post_rate_str)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # 第二排：历史对标与效益提升
+                st.markdown("#### 🚀 双时段效益复盘对比")
+                col_kpi5, col_kpi6, col_empty = st.columns([1, 1, 2])
                 with col_kpi5:
-                    st.metric(
-                        label="👥 整体接通率 (上线前人工)", 
-                        value=pre_man_rate_str,
-                        help="根据历史槽位上传的详单计算所得（旧口径对比参考线）"
-                    )
+                    st.metric(label="👥 整体接通率 (上线前历史)", value=pre_man_rate_str)
+                with col_kpi6:
+                    # 如果有提升，用绿色或显著方式展示
+                    if lift_value is not None:
+                        st.metric(
+                            label="📈 整体接通率提升", 
+                            value=lift_rate_str, 
+                            delta=f"{lift_value:.2%}",
+                            delta_color="normal"
+                        )
+                    else:
+                        st.metric(label="📈 整体接通率提升", value=lift_rate_str, help="请上传上线前历史详单解锁此对标指标")
                 
                 st.markdown("---")
                 
-                # 导出报表逻辑重组
+                # 汇总报表导出
                 df_summary = pd.DataFrame({
-                    "指标名称": ["总来电量(上线后)", "AI接通率(上线后)", "人工接通率(上线后)", "整体接通率(人工+AI)", "整体接通率(上线前历史)"],
-                    "计算结果": [total_calls, ai_rate_str, online_man_rate_str, overall_post_rate_str, pre_man_rate_str],
-                    "公式与时段口径": [
-                        "6个核心话务转化标签的总计数", 
-                        "AI接通量 / 进入AI电话量", 
-                        "人工接通量 / 进入人工电话量", 
-                        "最终成功接通('是') / 6个标签总电量",
-                        "历史人工接通总数 / 历史人工有状态总数"
+                    "指标名称": ["总来电量", "AI接通率", "人工接通率(上线后)", "整体接通率(人工+AI)", "整体接通率(上线前历史)", "整体接通率提升"],
+                    "计算结果": [total_calls, ai_rate_str, online_man_rate_str, overall_post_rate_str, pre_man_rate_str, lift_rate_str],
+                    "核心逻辑备注": [
+                        "上线后时段6标签汇总话务量", 
+                        "AI接通/进入AI", 
+                        "精确拆分的人工分母口径", 
+                        "最终成功接通('是') / 总来电量",
+                        "历史底表纯人工独立空间计算", 
+                        "上线后整体(人工+AI) - 上线前整体(人工)"
                     ]
                 })
                 
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                    df_summary.to_excel(writer, sheet_name="5大运营核心指标", index=False)
-                    df_post_res.to_excel(writer, sheet_name="上线后明细(含最终成功接通)", index=False)
+                    df_summary.to_excel(writer, sheet_name="6大KPI效益看板", index=False)
+                    df_post_res.to_excel(writer, sheet_name="上线后明细详单", index=False)
                     if uploaded_pre_file and 'df_pre_res' in locals():
                         df_pre_res.to_excel(writer, sheet_name="上线前历史明细", index=False)
                         
                 st.download_button(
-                    label="📥 下载5大核心指标对比报告",
+                    label="📥 下载终极版多时段效益报告",
                     data=excel_buffer.getvalue(),
-                    file_name="语音5大核心指标复盘简报.xlsx",
+                    file_name="语音运营效益复盘全量简报.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             
         except Exception as e:
             st.error(f"处理发生非预期错误: {e}")
 else:
-    st.info("💡 提示：请上传分机号参考表和上线后的详单底表。")
+    st.info("💡 提示：请在上方数据矩阵中心上传分机参考表与上线后详单底表。")
