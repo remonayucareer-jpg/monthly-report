@@ -6,8 +6,8 @@ import io
 # 设置网页标题与布局
 st.set_page_config(page_title="语音数据智能分析工具", layout="wide")
 
-st.title("📊 语音运营数据智能计算中心 - Part 2 (AI接通率预警版)")
-st.markdown("上传基础表格后，系统将自动计算多项指标。若 **AI接通率** 异常未达到100%，网页将自动标红预警。")
+st.title("📊 语音运营数据智能计算中心 - 6大指标逐项核对看板")
+st.markdown("当前阶段：已严格按照添加和计算顺序，将所有基础量、率级指标以及中间流转过程数据完整无盲区平铺呈现。")
 
 # 创建上传组件
 col1, col2 = st.columns(2)
@@ -100,7 +100,7 @@ def process_data(df_call, df_ext):
 
 # --- 网页交互与指标展示 ---
 if uploaded_call_file and uploaded_ext_file:
-    with st.spinner("正在依据模版逻辑精确计算中..."):
+    with st.spinner("正在严格按照指标链条加总数据中..."):
         try:
             if uploaded_call_file.name.endswith('.csv'):
                 df_call = pd.read_csv(uploaded_call_file)
@@ -112,124 +112,143 @@ if uploaded_call_file and uploaded_ext_file:
             else:
                 df_ext = pd.read_excel(uploaded_ext_file)
             
-            # 获取底层详单
+            # 执行底层清洗
             df_result = process_data(df_call, df_ext)
             
             if df_result is not None:
-                st.success("🎉 数据矩阵及多核心指标计算成功！")
+                st.success("🎉 全量指标矩阵重组成功，请依据下方流向依次检查数据：")
                 
-                # 过滤出客房接入的数据做指标基准
+                # 客房过滤基准
                 df_rooms = df_result[df_result['房间是否接入'] == '客房']
                 
-                # --- 【指标 1】总来电量 ---
+                # -----------------【数据计算流水线（按你的指定顺序）】-----------------
+                
+                # 指标 1：总来电量
                 total_calls = int(len(df_rooms))
                 
-                # --- 【指标 2】整体接通率（人工原口径） ---
+                # 指标 2：整体接通率（人工原口径）
                 df_rooms['人工通话状态_clean'] = df_rooms['人工通话状态'].astype(str).str.strip()
                 man_success_all = int((df_rooms['人工通话状态_clean'] == '接通').sum())
                 man_failed_all = int((df_rooms['人工通话状态_clean'] == '未接通').sum())
                 man_total_all = man_success_all + man_failed_all
                 man_connect_rate_all_str = f"{man_success_all / man_total_all:.2%}" if man_total_all > 0 else "--"
                 
-                # --- 【指标 3】上线后人工接通率（新精细口径） ---
+                # 指标 3 & 4：上线后人工接通率相关的前置数据
                 connect_types = df_rooms['接通方式'].astype(str).str.strip()
+                # 3. 人工接通量（分子：情况A + 情况B）
                 inc_ai_and_man_success = int((connect_types == '进入AI后，再转接人工，且人工接通').sum())
                 direct_man_success = int((connect_types == '直接进入人工，且人工接通').sum())
                 online_man_success_volume = inc_ai_and_man_success + direct_man_success
+                
+                # 4. 进入人工电话量（分母：4种情况之和）
                 ai_success_man_failed = int((connect_types == 'AI接通，转接人工，人工未接通').sum())
                 direct_man_failed = int((connect_types == '直接进入人工且最终未接通').sum())
                 online_man_total_volume = ai_success_man_failed + direct_man_failed + inc_ai_and_man_success + direct_man_success
+                
+                # 5. 上线后人工接通率
                 online_man_connect_rate_str = f"{online_man_success_volume / online_man_total_volume:.2%}" if online_man_total_volume > 0 else "--"
                 
-                # --- 【新增指标 4】AI 接通率模块 ---
+                # 指标 6 & 7：AI 接通率相关数据
                 df_rooms['AI通话状态_clean'] = df_rooms['AI通话状态'].astype(str).str.strip()
-                
-                # AI接通量：N列为"接通"且AL列为"客房"
                 ai_success_volume = int((df_rooms['AI通话状态_clean'] == '接通').sum())
-                # 进入AI电话量：安全起见统计有明确AI交互行为（接通或未接通）的客房电话
                 ai_total_volume = int(df_rooms['AI通话状态_clean'].isin(['接通', '未接通']).sum())
-                
-                # 计算AI接通率
                 ai_connect_rate = ai_success_volume / ai_total_volume if ai_total_volume > 0 else 0.0
                 ai_connect_rate_str = f"{ai_connect_rate:.2%}" if ai_total_volume > 0 else "--"
                 
-                # 判断是否触发标红条件（两数量不等，或者接通率不等于100%）
+                # AI是否异常标记
                 is_ai_abnormal = (ai_success_volume != ai_total_volume)
                 
-                # --- 【前端渲染】运营核心需求指标看板 ---
-                st.markdown("## 📈 运营核心需求指标看板")
+                # -----------------【前端顺序渲染区】-----------------
                 
-                # 第一排：总量与核心接通率
-                col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
-                with col_kpi1:
-                    st.metric(label="📞 总来电量", value=f"{total_calls} 次")
+                st.markdown("### 🧭 第一阶段：基础话务量与传统人工承接")
+                c_row1_1, c_row1_2, c_row1_3 = st.columns(3)
+                with c_row1_1:
+                    st.metric(label="1️⃣ 总来电量 (客房呼出)", value=f"{total_calls} 次")
+                with c_row1_2:
+                    st.metric(label="2️⃣ 整体接通率 (人工原口径)", value=man_connect_rate_all_str, help="人工接通 / 人工明确有状态总数")
+                with c_row1_3:
+                    st.caption(f"💡 传统口径参考：人工接通行数 `{man_success_all}` 次，人工未接通行数 `{man_failed_all}` 次。")
+
+                st.markdown("---")
                 
-                with col_kpi2:
-                    # 关键逻辑：如果异常则用 HTML 标红展示，否则用原生正常展示
+                st.markdown("### 🧭 第二阶段：上线后人工承接漏斗明细 (精细化口径)")
+                c_row2_1, c_row2_2, c_row2_3 = st.columns(3)
+                with c_row2_1:
+                    st.metric(label="3️⃣ 人工接通量 (分子)", value=f"{online_man_success_volume} 次", help=f"进入AI转人工接通({inc_ai_and_man_success}) + 直接进入人工接通({direct_man_success})")
+                with c_row2_2:
+                    st.metric(label="4️⃣ 进入人工电话量 (分母)", value=f"{online_man_total_volume} 次", help="4种转接及直连人工状态的大合集")
+                with c_row2_3:
+                    st.metric(label="5️⃣ 上线后人工接通率", value=online_man_connect_rate_str, help="由【指标3 / 指标4】严格计算得出")
+                
+                st.markdown("---")
+                
+                st.markdown("### 🧭 第三阶段：AI 客服专项接通与完备性校验")
+                c_row3_1, c_row3_2 = st.columns(2)
+                with c_row3_1:
+                    st.metric(label="6️⃣ AI话务对照组 (接通量 / 进入量)", value=f"{ai_success_volume} 次 / {ai_total_volume} 次")
+                with c_row3_2:
                     if is_ai_abnormal:
                         st.markdown(
-                            f"<div style='background-color:#FFD2D2; padding:10px; border-radius:5px; border-left:5px solid #FF0000;'>"
-                            f"<p style='margin:0; color:#550000; font-size:14px; font-weight:bold;'>🤖 AI接通率 (⚠️异常预警)</p>"
+                            f"<div style='background-color:#FFD2D2; padding:12px; border-radius:5px; border-left:6px solid #FF0000;'>"
+                            f"<p style='margin:0; color:#550000; font-size:14px; font-weight:bold;'>7️⃣ AI接通率 (⚠️触发不等预警)</p>"
                             f"<h2 style='margin:0; color:#CC0000;'>{ai_connect_rate_str}</h2>"
-                            f"<p style='margin:0; color:#772222; font-size:12px;'>接通数({ai_success_volume}) 与 进入数({ai_total_volume}) 不相等！</p>"
+                            f"<p style='margin:0; color:#772222; font-size:12px;'>警告：当前底表统计到的 AI 接通数量与总进入量不一致，建议排查底层详单。</p>"
                             f"</div>", 
                             unsafe_allow_html=True
                         )
                     else:
-                        st.metric(label="🤖 AI接通率 (标准健康)", value=ai_connect_rate_str, help="常规运营状态下，AI接通率应当维持在100%")
-                        
-                with col_kpi3:
-                    st.metric(label="🎧 上线后人工接通率", value=online_man_connect_rate_str)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                # 第二排：次级过程明细
-                col_sub1, col_sub2 = st.columns(2)
-                with col_sub1:
-                    st.caption(f"**AI通话量拆解**：AI成功接通数：`{ai_success_volume}` 次 | 判定进入AI总数：`{ai_total_volume}` 次")
-                with col_sub2:
-                    st.caption(f"**人工话务量拆解**：进入人工总数：`{online_man_total_volume}` 次 | 人工成功接通：`{online_man_success_volume}` 次")
-                
+                        st.metric(label="7️⃣ AI接通率 (标准健康)", value=ai_connect_rate_str, help="AI完全合流，目前数据呈现完美100%")
+
                 st.markdown("---")
                 
-                # --- 【数据导出】创建指标汇总表，准备写入 Excel 的首页 ---
+                # -----------------【导出模块完整重构】-----------------
+                # 确保导出的电子表格也按照检查顺序排列
                 df_summary = pd.DataFrame({
-                    "核心运营指标名称": [
+                    "顺序编号": ["1", "2", "3", "4", "5", "6", "7"],
+                    "核心指标/数据项名称": [
                         "总来电量（所有启用AI的客房呼出的电话量）", 
                         "整体接通率（人工原口径）",
-                        "上线后人工接通率（新精细口径）",
-                        "AI接通率（正常情况下为100%）"
+                        "人工接通量（上线后人工分子）",
+                        "进入人工电话量（上线后人工分母）",
+                        "上线后人工接通率（精细口径）",
+                        "AI承接业务量对账（接通/全部）",
+                        "AI接通率（常规应为100%）"
                     ],
                     "当前计算数值": [
                         total_calls, 
                         man_connect_rate_all_str,
+                        f"{online_man_success_volume} 次",
+                        f"{online_man_total_volume} 次",
                         online_man_connect_rate_str,
+                        f"{ai_success_volume} / {ai_total_volume}",
                         ai_connect_rate_str
                     ],
-                    "计算口径/公式说明": [
-                        "=COUNTIF(详单!房间是否接入, '客房')", 
-                        f"全部人工接通({man_success_all}) / 全部明确状态数({man_total_all})",
-                        f"人工接通量({online_man_success_volume}) / 进入人工电话量({online_man_total_volume})",
-                        f"AI接通量({ai_success_volume}) / 进入AI电话量({ai_total_volume}) {'(⚠️异常)' if is_ai_abnormal else ''}"
+                    "核对口径与公式说明": [
+                        "COUNTIF 房间是否接入 == '客房'", 
+                        "全部明确状态的人工接通 / 人工总通话",
+                        "两种人工接通标准场景加总",
+                        "包含转人工未接、直连未接、转人工已接、直连已接4类",
+                        "人工接通量 / 进入人工电话量",
+                        "AI单独成功接通数 与 AI交互数 对账",
+                        f"AI接通量/进入AI量 {'(⚠️数据不对等风险)' if is_ai_abnormal else '（健康）'}"
                     ]
                 })
                 
-                # 在内存中构建多 Sheet 的 XLSX 电子表格
+                # 写入多工作表 Excel 
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     df_summary.to_excel(writer, sheet_name="核心运营报告首页", index=False)
                     df_result.to_excel(writer, sheet_name="云总机通话详单", index=False)
                 excel_data = excel_buffer.getvalue()
                 
-                # 提供高级 XLSX 文件下载
                 st.download_button(
-                    label="📥 下载完整运营报告 (包含最新AI接通率看板)",
+                    label="📥 下载已按顺序对齐的全新版本报告",
                     data=excel_data,
-                    file_name="语音运营分析复盘报告_v4.xlsx",
+                    file_name="语音运营分析复盘报告_按序对齐版.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             
         except Exception as e:
             st.error(f"处理发生非预期错误: {e}")
 else:
-    st.info("💡 提示：请在上方上传表格，系统会自动监控并校验AI接通率指标。")
+    st.info("💡 提示：请在上方上传表格，系统会自动以严格的流水顺序为你呈现对账看板。")
