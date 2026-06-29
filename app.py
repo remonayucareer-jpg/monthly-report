@@ -145,7 +145,7 @@ if uploaded_call_file and uploaded_ext_file:
                 
                 # --- 【新增模块】内存中构建多 Sheet 的 XLSX 电子表格 ---
                 excel_buffer = io.BytesIO()
-                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     # Sheet 1: 汇总看板页
                     df_summary.to_excel(writer, sheet_name="核心运营报告首页", index=False)
                     # Sheet 2: 数据明细页
