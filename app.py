@@ -8,7 +8,7 @@ import re
 st.set_page_config(page_title="语音数据智能分析工具", layout="wide")
 
 st.title("📊 南京金鹰世界G酒店-语音运营数据分析")
-st.markdown("页面已完全对齐真实底表字段，纯粹基于【呼叫时间】列进行分时段精准对账。")
+st.markdown("页面已完全对齐真实底表字段，并新增24H分时【整体接通率提升】多维对账指标。")
 
 # ----------------- 🛠️ 数据矩阵上传区 -----------------
 st.markdown("### 📥 数据矩阵上传中心")
@@ -37,11 +37,10 @@ def clean_to_int_str(val):
 
 
 def extract_hour_from_datetime(val):
-    """从标准呼叫时间字符串（如 '2026-04-15 23:58:43'）中精准切出小时"""
+    """从标准呼叫时间字符串中精准切出小时"""
     if pd.isna(val):
         return None
     val_str = str(val).strip()
-    # 使用正则匹配类似 23:58:43 中的小时部分
     match = re.search(r'(\d{1,2}):\d{2}:\d{2}', val_str)
     if match:
         try:
@@ -58,7 +57,7 @@ def process_data(df_raw, df_ext):
     df_call = df_raw.copy()
     df_call.columns = df_call.columns.astype(str).str.strip()
     
-    # 基于真实底表字段进行严格校验
+    # 严格校验
     required_cols = ['主叫号码', '通话状态', 'AI通话状态', '人工通话状态', '呼叫时间']
     if any(col not in df_call.columns for col in required_cols):
         return None
@@ -82,7 +81,6 @@ def process_data(df_raw, df_ext):
         n = str(row['AI通话状态']).strip()
         o = str(row['人工通话状态']).strip()
         
-        # 只要最终通话状态为接通，或者人工接通、AI接通，即视为成功
         if m == '接通' or n == '接通' or o == '接通':
             return '是'
         return '否'
@@ -198,19 +196,38 @@ if uploaded_post_file and uploaded_ext_file:
                         pre_h_total = df_h_pre.groupby('⚡标准时段').size()
                         pre_h_success = df_h_pre[df_h_pre['最终成功接通'] == '是'].groupby('⚡标准时段').size()
                 
-                # 双流合并填充
+                # 核心：多维对账双流合并填充（含分时提升率计算）
                 def get_rates(row):
                     h = row['⚡H_int']
                     t_pre = pre_h_total.get(h, 0)
                     s_pre = pre_h_success.get(h, 0)
-                    rate_pre = f"{s_pre / t_pre:.1%}" if t_pre > 0 else "--"
                     
                     t_post = post_h_total.get(h, 0)
                     s_post = post_h_success.get(h, 0)
-                    rate_post = f"{s_post / t_post:.1%}" if t_post > 0 else "--"
-                    return pd.Series([rate_pre, rate_post])
+                    
+                    # 基础率计算
+                    r_pre_val = s_pre / t_pre if t_pre > 0 else None
+                    r_post_val = s_post / t_post if t_post > 0 else None
+                    
+                    rate_pre_str = f"{r_pre_val:.1%}" if r_pre_val is not None else "--"
+                    rate_post_str = f"{r_post_val:.1%}" if r_post_val is not None else "--"
+                    
+                    # 动态计算分时【整体接通率提升】及视觉符号拼接
+                    if r_pre_val is not None and r_post_val is not None:
+                        diff = r_post_val - r_pre_val
+                        if diff > 0:
+                            rate_lift_str = f"↑ {diff:.1%}"  # 上涨：左侧上升箭头
+                        elif diff < 0:
+                            rate_lift_str = f"{diff:.1%} ↓"  # 下降：右侧下降箭头
+                        else:
+                            rate_lift_str = "0.0%"
+                    else:
+                        rate_lift_str = "--"
+                        
+                    return pd.Series([rate_pre_str, rate_post_str, rate_lift_str])
                 
-                hourly_summary[['整体接通率（人工）[上线前]', '整体接通率（人工+AI）[上线后]']] = hourly_summary.apply(get_rates, axis=1)
+                # 严格按照需求指定的列名和顺序进行映射
+                hourly_summary[['整体接通率（人工）[上线前]', '整体接通率（人工+AI）[上线后]', '整体接通率提升（上线后）']] = hourly_summary.apply(get_rates, axis=1)
                 hourly_display = hourly_summary.drop(columns=['⚡H_int'])
                 
                 # --- 前端卡片渲染 ---
