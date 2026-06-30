@@ -76,7 +76,7 @@ def process_data(df_raw, df_ext):
 
     # 3. 判定最终成功接通
     def check_final_success(row):
-        if row['房间是否接入'] != '客房': 
+        if row['房間是否接入'] != '客房': 
             return '--'
         m = str(row['通话状态']).strip()
         n = str(row['AI通话状态']).strip()
@@ -329,50 +329,47 @@ if uploaded_post_file and uploaded_ext_file:
                         if worksheet.cell(row=row, column=6).value is not None:
                             worksheet.cell(row=row, column=6).number_format = '#,##0.0'
                     
-                    # 1. 创建主轴：柱状图（左轴 - 通数）
-                    chart_bar = BarChart()
-                    chart_bar.type = "col"
-                    chart_bar.style = 10
-                    chart_bar.title = "分时段接通率情况与挽回漏接量对比分析"
-                    
-                    # 设置主轴的独立坐标轴 ID
-                    chart_bar.x_axis.axId = 10
-                    chart_bar.y_axis.axId = 11
-                    chart_bar.y_axis.title = "减少电话漏接量 (通)"
-                    chart_bar.y_axis.crosses = "autoZero"
-                    
-                    # 绑定柱状图数据（第6列：减少电话漏接量）
-                    data_bars = Reference(worksheet, min_col=6, min_row=1, max_row=25)
-                    cats = Reference(worksheet, min_col=1, min_row=2, max_row=25)
-                    chart_bar.add_data(data_bars, titles_from_data=True)
-                    chart_bar.set_categories(cats)
-                    
-                    # 2. 创建独立次轴：折线图（右轴 - 百分比）
+                    # 1. 声明拥有原生 .combine 方法的 LineChart 作为基载轴（左轴）
                     chart_line = LineChart()
-                    
-                    # 设置次轴独立的坐标轴 ID 链
-                    chart_line.y_axis.axId = 21
+                    chart_line.title = "分时段接通率情况与挽回漏接量对比分析"
+                    chart_line.style = 13
                     chart_line.y_axis.title = "接通率 (%)"
-                    chart_line.y_axis.crosses = "max"          # 核心：推到最右侧
-                    chart_line.y_axis.majorGridlines = None    # 移除多余的叠加网格线，防止干扰
+                    chart_line.y_axis.scaling.min = 0.0
+                    chart_line.y_axis.scaling.max = 1.0
                     
                     # 绑定折线图数据（第2列到第4列：3条接通率）
                     data_lines = Reference(worksheet, min_col=2, min_row=1, max_col=4, max_row=25)
+                    cats = Reference(worksheet, min_col=1, min_row=2, max_row=25)
                     chart_line.add_data(data_lines, titles_from_data=True)
+                    chart_line.set_categories(cats)
                     
-                    # 极其关键的脱钩操作：显式声明折线图的 X 轴完全复用并让位于柱状图的 X 轴
-                    chart_line.x_axis = chart_bar.x_axis
-                    
-                    # 完美开启数据点小圆圈标记
+                    # 完美开启折线小圆圈标记
                     for series in chart_line.series:
                         series.marker.symbol = "circle"
                         series.marker.size = 5
                     
-                    # 3. 使用标准底层接口合并解耦的双轴图表
-                    chart_bar.combine(chart_line)
+                    # 2. 声明没有 .combine 方法的 BarChart 作为附载轴（右轴）
+                    chart_bar = BarChart()
+                    chart_bar.type = "col"
+                    
+                    # 绑定柱状图数据（第6列：减少电话漏接量）
+                    data_bars = Reference(worksheet, min_col=6, min_row=1, max_row=25)
+                    chart_bar.add_data(data_bars, titles_from_data=True)
+                    
+                    # 3. 独立轴解耦跨越配置：将柱状图拉到右侧次轴
+                    chart_bar.y_axis.title = "减少电话漏接量 (通)"
+                    chart_bar.y_axis.axId = 200
+                    chart_bar.y_axis.crosses = "max"          # 柱状图推至右轴
+                    chart_line.y_axis.crosses = "autoZero"     # 折线图锁在左轴
+                    
+                    # 解耦 X 轴冲突：将柱状图的 X 轴完全复用并挂载到折线图的 X 轴通道上
+                    chart_bar.x_axis = chart_line.x_axis
+                    
+                    # 使用标准无冲突接口进行混合注入
+                    chart_line.combine(chart_bar)
                     
                     # 将渲染完的高级动态原生图表插入到 A28
-                    worksheet.add_chart(chart_bar, "A28")
+                    worksheet.add_chart(chart_line, "A28")
                     
                 st.download_button(
                     label="📥 导出带 1:1 原生联动图表的全量 Excel",
