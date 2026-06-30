@@ -3,13 +3,14 @@ import pandas as pd
 import numpy as np
 import io
 import re
+import plotly.graph_objects as fgo
 from openpyxl.chart import BarChart, LineChart, Reference
 
 # 设置网页标题与布局
 st.set_page_config(page_title="语音数据智能分析工具", layout="wide")
 
 st.title("📊 南京金鹰世界G酒店-语音运营数据分析")
-st.markdown("页面已更名【分时段接通率情况】，并支持 1:1 复刻 Excel 原生双轴复合图表导出。")
+st.markdown("页面与Excel已同步支持 1:1 复刻双轴复合图表（三折线+单柱）。")
 
 # ----------------- 🛠️ 数据矩阵上传区 -----------------
 st.markdown("### 📥 数据矩阵上传中心")
@@ -159,14 +160,13 @@ if uploaded_post_file and uploaded_ext_file:
                 lift_rate_str = "--"
                 saved_calls_str = "--"
                 
-                # 24小时分时大盘初始化
-                hourly_summary = pd.DataFrame({"时段": [f"{i}:00" for i in range(24)], "⚡H_int": list(range(24))})
-                
                 # 上线后分时放量
                 df_h_post = df_rooms_post[df_rooms_post['⚡标准时段'].notna()]
                 post_h_total = df_h_post.groupby('⚡标准时段').size()
                 post_h_success = df_h_post[df_h_post['最终成功接通'] == '是'].groupby('⚡标准时段').size()
-                
+                post_h_man_success = df_h_post[df_h_post['接通方式'].str.strip().isin(['进入AI后，再转接人工，且人工接通', '直接进入人工，且人工接通'])].groupby('⚡标准时段').size()
+                post_h_man_total = df_h_post[df_h_post['接通方式'].str.strip().isin(['进入AI后，再转接人工，且人工接通', '直接进入人工，且人工接通', 'AI接通，转接人工，人工未接通', '直接进入人工且最终未接通'])].groupby('⚡标准时段').size()
+
                 pre_h_total, pre_h_success = {}, {}
                 if uploaded_pre_file:
                     if uploaded_pre_file.name.endswith('.csv'):
@@ -193,32 +193,34 @@ if uploaded_post_file and uploaded_ext_file:
                         pre_h_total = df_h_pre.groupby('⚡标准时段').size()
                         pre_h_success = df_h_pre[df_h_pre['最终成功接通'] == '是'].groupby('⚡标准时段').size()
                 
-                # 双流对账核心合并计算器（分离网页文本与纯Excel值）
+                # 双流合并计算
                 web_rows = []
-                excel_rows = [] # 用于保留无Emoji符号的纯数字矩阵，供原生图表消费
+                excel_rows = []
                 
                 for i in range(24):
                     t_pre = pre_h_total.get(i, 0)
                     s_pre = pre_h_success.get(i, 0)
                     t_post = post_h_total.get(i, 0)
                     s_post = post_h_success.get(i, 0)
+                    s_man_post = post_h_man_success.get(i, 0)
+                    t_man_post = post_h_man_total.get(i, 0)
                     
-                    val_pre = s_pre / t_pre if t_pre > 0 else None
-                    val_post = s_post / t_post if t_post > 0 else None
+                    val_pre_overall = s_pre / t_pre if t_pre > 0 else None
+                    val_post_man = s_man_post / t_man_post if t_man_post > 0 else None
+                    val_post_overall = s_post / t_post if t_post > 0 else None
                     
-                    # 1. 组装网页端文本显示流
-                    str_pre = f"{val_pre:.1%}" if val_pre is not None else "--"
-                    str_post = f"{val_post:.1%}" if val_post is not None else "--"
+                    str_pre_overall = f"{val_pre_overall:.1%}" if val_pre_overall is not None else "--"
+                    str_post_man = f"{val_post_man:.1%}" if val_post_man is not None else "--"
+                    str_post_overall = f"{val_post_overall:.1%}" if val_post_overall is not None else "--"
+                    
                     str_lift = "--"
                     str_saved = "--"
-                    
                     val_lift = None
                     val_saved = None
                     
-                    if val_pre is not None and val_post is not None:
-                        val_lift = val_post - val_pre
+                    if val_pre_overall is not None and val_post_overall is not None:
+                        val_lift = val_post_overall - val_pre_overall
                         val_saved = val_lift * t_post
-                        
                         str_saved = f"{val_saved:.1f}"
                         if val_lift > 0:
                             str_lift = f"↑ {val_lift:.1%}"
@@ -229,16 +231,18 @@ if uploaded_post_file and uploaded_ext_file:
                     
                     web_rows.append({
                         "时段": f"{i}:00",
-                        "整体接通率（人工）[上线前]": str_pre,
-                        "整体接通率（人工+AI）[上线后]": str_post,
+                        "整体接通率（人工）[上线前]": str_pre_overall,
+                        "人工接通率[上线后]": str_post_man,
+                        "整体接通率（人工+AI）[上线后]": str_post_overall,
                         "整体接通率提升（上线后）": str_lift,
                         "减少电话漏接量（通）": str_saved
                     })
                     
                     excel_rows.append({
                         "时段": f"{i}:00",
-                        "整体接通率（人工）[上线前]": val_pre,
-                        "整体接通率（人工+AI）[上线后]": val_post,
+                        "整体接通率（人工）[上线前]": val_pre_overall,
+                        "人工接通率[上线后]": val_post_man,
+                        "整体接通率（人工+AI）[上线后]": val_post_overall,
                         "整体接通率提升（上线后）": val_lift,
                         "减少电话漏接量（通）": val_saved
                     })
@@ -246,7 +250,7 @@ if uploaded_post_file and uploaded_ext_file:
                 df_web_display = pd.DataFrame(web_rows)
                 df_excel_clean = pd.DataFrame(excel_rows)
                 
-                # --- 前端大盘看板渲染 ---
+                # --- 前端面板渲染 ---
                 st.markdown("### 📞 PART1：酒店电话数据")
                 st.info(f"**总来电量（所有启用AI的客房呼出的电话量）：{total_calls}**")
                 
@@ -264,68 +268,97 @@ if uploaded_post_file and uploaded_ext_file:
                 with col_b6: st.metric(label="减少电话漏接量", value=saved_calls_str)
                 
                 st.markdown("---")
-                # 严格对齐更名需求：分时段接通率情况
                 st.markdown("#### ⏰ 分时段接通率情况")
                 st.dataframe(df_web_display, use_container_width=True)
                 
-                # ----------------- 🛠️ 1:1 Excel 原生混合双轴图表构建 -----------------
+                # ----------------- 🎨 网页端交互图表绘制 (Plotly) -----------------
+                st.markdown("#### 📉 分时段接通率趋势与挽回话务复盘画布")
+                fig = fgo.Figure()
+                hours_x = df_excel_clean["时段"]
+                
+                # 次轴：减少电话漏接量（修长背景柱）
+                fig.add_trace(fgo.Bar(
+                    x=hours_x, y=df_excel_clean["减少电话漏接量（通）"],
+                    name="减少电话漏接量（通）", yaxis="y2",
+                    marker_color="rgba(173, 216, 230, 0.4)", marker_line_width=0
+                ))
+                # 主轴：上线前整体接通率（灰色虚线）
+                fig.add_trace(fgo.Scatter(
+                    x=hours_x, y=df_excel_clean["整体接通率（人工）[上线前]"],
+                    name="整体接通率（人工）[上线前]", mode="lines+markers",
+                    line=dict(color="darkgray", width=2, dash="dash"), marker=dict(symbol="circle", size=6)
+                ))
+                # 主轴：上线后人工接通率（浅蓝色实线）
+                fig.add_trace(fgo.Scatter(
+                    x=hours_x, y=df_excel_clean["人工接通率[上线后]"],
+                    name="人工接通率[上线后]", mode="lines+markers",
+                    line=dict(color="#636EFA", width=2), marker=dict(symbol="circle", size=6)
+                ))
+                # 主轴：上线后整体接通率（深蓝色实线）
+                fig.add_trace(fgo.Scatter(
+                    x=hours_x, y=df_excel_clean["整体接通率（人工+AI）[上线后]"],
+                    name="整体接通率（人工+AI）[上线后]", mode="lines+markers",
+                    line=dict(color="#19D3BF", width=3), marker=dict(symbol="circle", size=8)
+                ))
+                
+                fig.update_layout(
+                    template="plotly_white",
+                    xaxis=dict(title="24小时分时时段"),
+                    yaxis=dict(title="接通率 (%)", tickformat=".0%", range=[0, 1.1]),
+                    yaxis2=dict(title="减少电话漏接量 (通)", overlaying="y", side="right", showgrid=False),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # ----------------- 🛠️ Excel 原生双轴图表高定编程 -----------------
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                    # 写入纯净数据页
                     df_excel_clean.to_excel(writer, sheet_name="分时段接通率情况", index=False)
-                    
-                    # 安全存储明细页
                     st.session_state['df_post_res'].to_excel(writer, sheet_name="上线后明细详单", index=False)
                     if uploaded_pre_file and 'df_pre_res' in st.session_state:
                         st.session_state['df_pre_res'].to_excel(writer, sheet_name="上线前明细详单", index=False)
                     
-                    # 获取 openpyxl 工作簿句柄进行图表编程
                     workbook = writer.book
                     worksheet = writer.sheets["分时段接通率情况"]
                     
-                    # A. 格式化数据列（让 Excel 认识百分比与浮点数）
+                    # 单元格格式化
                     for row in range(2, 26):
-                        # 上线前接通率
-                        if worksheet.cell(row=row, column=2).value is not None:
-                            worksheet.cell(row=row, column=2).number_format = '0.0%'
-                        # 上线后接通率
-                        if worksheet.cell(row=row, column=3).value is not None:
-                            worksheet.cell(row=row, column=3).number_format = '0.0%'
-                        # 提升率
-                        if worksheet.cell(row=row, column=4).value is not None:
-                            worksheet.cell(row=row, column=4).number_format = '0.0%'
-                        # 减少漏接量
-                        if worksheet.cell(row=row, column=5).value is not None:
-                            worksheet.cell(row=row, column=5).number_format = '#,##0.0'
+                        for col in [2, 3, 4, 5]:
+                            worksheet.cell(row=row, column=col).number_format = '0.0%'
+                        worksheet.cell(row=row, column=6).number_format = '#,##0.0'
                     
-                    # B. 编程构建主轴：LineChart（折线图）
+                    # 1. 主轴折线图（融合3条接通率曲线）
                     c1 = LineChart()
-                    c1.title = "分时段接通率提升与挽回话务量分析看板 (1:1 复刻版)"
-                    c1.style = 13  # 选用经典高端商务蓝灰配色样式
-                    c1.y_axis.title = "接通率 / 提升率 (%)"
+                    c1.title = "分时段接通率情况与挽回漏接量对比分析"
+                    c1.style = 13
+                    c1.y_axis.title = "接通率 (%)"
                     c1.y_axis.scaling.min = 0.0
                     c1.y_axis.scaling.max = 1.0
                     
-                    # 引入折线数据源：第 2 列到第 3 列（上线前与上线后接通率）
-                    data_lines = Reference(worksheet, min_col=2, min_row=1, max_col=3, max_row=25)
+                    # 引用 2列到 4列（包含3条接通率）
+                    data_lines = Reference(worksheet, min_col=2, min_row=1, max_col=4, max_row=25)
                     cats = Reference(worksheet, min_col=1, min_row=2, max_row=25)
                     c1.add_data(data_lines, titles_from_data=True)
                     c1.set_categories(cats)
                     
-                    # C. 编程构建次轴：BarChart（柱状图）
+                    # 像素级开启折线小圆圈标记（复刻图1）
+                    for series in c1.series:
+                        series.marker.symbol = "circle"
+                        series.marker.size = 5
+                        series.marker.graphicalProperties.solidFill = "FFFFFF"
+                    
+                    # 2. 次轴柱状图（挽回漏接量）
                     c2 = BarChart()
                     c2.type = "col"
-                    # 引入柱状图数据源：第 5 列（减少电话漏接量）
-                    data_bars = Reference(worksheet, min_col=5, min_row=1, max_row=25)
+                    data_bars = Reference(worksheet, min_col=6, min_row=1, max_row=25)
                     c2.add_data(data_bars, titles_from_data=True)
                     
-                    # D. 激活次主轴跨越，并合并两个图表（实现Combo混合图表）
                     c2.y_axis.title = "减少电话漏接量 (通)"
                     c2.y_axis.axId = 200
-                    c2.y_axis.crosses = "max"  # 关键：将柱状图的 Y 轴强制推到图表最右侧
-                    c1 += c2                  # 将柱状图融进折线图坐标系
+                    c2.y_axis.crosses = "max"
+                    c1 += c2
                     
-                    # E. 决定图表在 Excel 表格中的落脚点（贴在表格下方，跳过两行，落在 A28 单元格）
+                    # 图表落脚点
                     worksheet.add_chart(c1, "A28")
                     
                 st.download_button(
