@@ -310,7 +310,7 @@ if uploaded_post_file and uploaded_ext_file:
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # ----------------- 🛠️ Excel 原生双轴图表高定编程 -----------------
+                # ----------------- 🛠️ Excel 原生双轴图表高级重构 -----------------
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     df_excel_clean.to_excel(writer, sheet_name="分时段接通率情况", index=False)
@@ -324,42 +324,45 @@ if uploaded_post_file and uploaded_ext_file:
                     # 单元格格式化
                     for row in range(2, 26):
                         for col in [2, 3, 4, 5]:
-                            worksheet.cell(row=row, column=col).number_format = '0.0%'
-                        worksheet.cell(row=row, column=6).number_format = '#,##0.0'
+                            if worksheet.cell(row=row, column=col).value is not None:
+                                worksheet.cell(row=row, column=col).number_format = '0.0%'
+                        if worksheet.cell(row=row, column=6).value is not None:
+                            worksheet.cell(row=row, column=6).number_format = '#,##0.0'
                     
-                    # 1. 主轴折线图（融合3条接通率曲线）
-                    c1 = LineChart()
-                    c1.title = "分时段接通率情况与挽回漏接量对比分析"
-                    c1.style = 13
-                    c1.y_axis.title = "接通率 (%)"
-                    c1.y_axis.scaling.min = 0.0
-                    c1.y_axis.scaling.max = 1.0
+                    # 1. 声明底层柱状图（次轴依赖）
+                    chart_bar = BarChart()
+                    chart_bar.type = "col"
+                    chart_bar.style = 10
+                    chart_bar.title = "分时段接通率情况与挽回漏接量对比分析"
+                    chart_bar.y_axis.title = "减少电话漏接量 (通)"
                     
-                    # 引用 2列到 4列（包含3条接通率）
-                    data_lines = Reference(worksheet, min_col=2, min_row=1, max_col=4, max_row=25)
+                    # 提取第 6 列：减少电话漏接量（通）
+                    data_bars = Reference(worksheet, min_col=6, min_row=1, max_row=25)
                     cats = Reference(worksheet, min_col=1, min_row=2, max_row=25)
-                    c1.add_data(data_lines, titles_from_data=True)
-                    c1.set_categories(cats)
+                    chart_bar.add_data(data_bars, titles_from_data=True)
+                    chart_bar.set_categories(cats)
                     
-                    # 像素级开启折线小圆圈标记（复刻图1）
-                    for series in c1.series:
+                    # 2. 声明上层折线图（主轴依赖）
+                    chart_line = LineChart()
+                    # 提取第 2 列到第 4 列（包含3条接通率）
+                    data_lines = Reference(worksheet, min_col=2, min_row=1, max_col=4, max_row=25)
+                    chart_line.add_data(data_lines, titles_from_data=True)
+                    
+                    # 启用折线小圆点标记
+                    for series in chart_line.series:
                         series.marker.symbol = "circle"
                         series.marker.size = 5
-                        series.marker.graphicalProperties.solidFill = "FFFFFF"
                     
-                    # 2. 次轴柱状图（挽回漏接量）
-                    c2 = BarChart()
-                    c2.type = "col"
-                    data_bars = Reference(worksheet, min_col=6, min_row=1, max_row=25)
-                    c2.add_data(data_bars, titles_from_data=True)
+                    # 3. 核心修复：通过专属 Axes 通道合并双轴，不采用直接相加
+                    chart_line.y_axis.title = "接通率 (%)"
+                    chart_line.y_axis.axId = 200
+                    chart_line.y_axis.crosses = "max"     # 强制将折线图的 Y 轴锁在最右侧
+                    chart_bar.y_axis.crosses = "autoZero"  # 柱状图 Y 轴在左侧
                     
-                    c2.y_axis.title = "减少电话漏接量 (通)"
-                    c2.y_axis.axId = 200
-                    c2.y_axis.crosses = "max"
-                    c1 += c2
+                    chart_bar.combine(chart_line)          # 官方推荐的无冲突图表合并方法
                     
-                    # 图表落脚点
-                    worksheet.add_chart(c1, "A28")
+                    # 图表摆放位置（A28 单元格）
+                    worksheet.add_chart(chart_bar, "A28")
                     
                 st.download_button(
                     label="📥 导出带 1:1 原生联动图表的全量 Excel",
