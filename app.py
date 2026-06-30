@@ -76,7 +76,7 @@ def process_data(df_raw, df_ext):
 
     # 3. 判定最终成功接通
     def check_final_success(row):
-        if row['房間是否接入'] != '客房': 
+        if row['房间是否接入'] != '客房':  # 已经完美修复为简体字 “间”
             return '--'
         m = str(row['通话状态']).strip()
         n = str(row['AI通话状态']).strip()
@@ -310,7 +310,7 @@ if uploaded_post_file and uploaded_ext_file:
                 )
                 st.plotly_chart(fig, width='stretch')
                 
-                # ----------------- 🛠️ Excel 原生双轴图表终极修复 -----------------
+                # ----------------- 🛠️ Excel 原生双轴图表高级注入 -----------------
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     df_excel_clean.to_excel(writer, sheet_name="分时段接通率情况", index=False)
