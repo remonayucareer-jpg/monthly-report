@@ -310,7 +310,7 @@ if uploaded_post_file and uploaded_ext_file:
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # ----------------- 🛠️ Excel 原生双轴图表高级重构 -----------------
+                # ----------------- 🛠️ Excel 原生双轴图表终极修复 -----------------
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     df_excel_clean.to_excel(writer, sheet_name="分时段接通率情况", index=False)
@@ -321,7 +321,7 @@ if uploaded_post_file and uploaded_ext_file:
                     workbook = writer.book
                     worksheet = writer.sheets["分时段接通率情况"]
                     
-                    # 单元格格式化
+                    # 单元格展现样式格式化
                     for row in range(2, 26):
                         for col in [2, 3, 4, 5]:
                             if worksheet.cell(row=row, column=col).value is not None:
@@ -329,39 +329,49 @@ if uploaded_post_file and uploaded_ext_file:
                         if worksheet.cell(row=row, column=6).value is not None:
                             worksheet.cell(row=row, column=6).number_format = '#,##0.0'
                     
-                    # 1. 声明底层柱状图（次轴依赖）
+                    # 1. 创建主轴：柱状图（左轴 - 通数）
                     chart_bar = BarChart()
                     chart_bar.type = "col"
                     chart_bar.style = 10
                     chart_bar.title = "分时段接通率情况与挽回漏接量对比分析"
-                    chart_bar.y_axis.title = "减少电话漏接量 (通)"
                     
-                    # 提取第 6 列：减少电话漏接量（通）
+                    # 设置主轴的独立坐标轴 ID
+                    chart_bar.x_axis.axId = 10
+                    chart_bar.y_axis.axId = 11
+                    chart_bar.y_axis.title = "减少电话漏接量 (通)"
+                    chart_bar.y_axis.crosses = "autoZero"
+                    
+                    # 绑定柱状图数据（第6列：减少电话漏接量）
                     data_bars = Reference(worksheet, min_col=6, min_row=1, max_row=25)
                     cats = Reference(worksheet, min_col=1, min_row=2, max_row=25)
                     chart_bar.add_data(data_bars, titles_from_data=True)
                     chart_bar.set_categories(cats)
                     
-                    # 2. 声明上层折线图（主轴依赖）
+                    # 2. 创建独立次轴：折线图（右轴 - 百分比）
                     chart_line = LineChart()
-                    # 提取第 2 列到第 4 列（包含3条接通率）
+                    
+                    # 设置次轴独立的坐标轴 ID 链
+                    chart_line.y_axis.axId = 21
+                    chart_line.y_axis.title = "接通率 (%)"
+                    chart_line.y_axis.crosses = "max"          # 核心：推到最右侧
+                    chart_line.y_axis.majorGridlines = None    # 移除多余的叠加网格线，防止干扰
+                    
+                    # 绑定折线图数据（第2列到第4列：3条接通率）
                     data_lines = Reference(worksheet, min_col=2, min_row=1, max_col=4, max_row=25)
                     chart_line.add_data(data_lines, titles_from_data=True)
                     
-                    # 启用折线小圆点标记
+                    # 极其关键的脱钩操作：显式声明折线图的 X 轴完全复用并让位于柱状图的 X 轴
+                    chart_line.x_axis = chart_bar.x_axis
+                    
+                    # 完美开启数据点小圆圈标记
                     for series in chart_line.series:
                         series.marker.symbol = "circle"
                         series.marker.size = 5
                     
-                    # 3. 核心修复：通过专属 Axes 通道合并双轴，不采用直接相加
-                    chart_line.y_axis.title = "接通率 (%)"
-                    chart_line.y_axis.axId = 200
-                    chart_line.y_axis.crosses = "max"     # 强制将折线图的 Y 轴锁在最右侧
-                    chart_bar.y_axis.crosses = "autoZero"  # 柱状图 Y 轴在左侧
+                    # 3. 使用标准底层接口合并解耦的双轴图表
+                    chart_bar.combine(chart_line)
                     
-                    chart_bar.combine(chart_line)          # 官方推荐的无冲突图表合并方法
-                    
-                    # 图表摆放位置（A28 单元格）
+                    # 将渲染完的高级动态原生图表插入到 A28
                     worksheet.add_chart(chart_bar, "A28")
                     
                 st.download_button(
