@@ -8,7 +8,7 @@ import re
 st.set_page_config(page_title="语音数据智能分析工具", layout="wide")
 
 st.title("📊 南京金鹰世界G酒店-语音运营数据分析")
-st.markdown("页面已完成样式与话术的 1:1 深度复刻，并已全量对齐【核心大盘 KPI】与【24小时分时段看板】的过滤引擎。")
+st.markdown("页面已完全对齐真实底表字段，纯粹基于【呼叫时间】列进行分时段精准对账。")
 
 # ----------------- 🛠️ 数据矩阵上传区 -----------------
 st.markdown("### 📥 数据矩阵上传中心")
@@ -28,7 +28,6 @@ with col_up3:
 
 
 def clean_to_int_str(val):
-    """数字清洗：将 1912.0 或 '1912' 统一安全地转换为 '1912'"""
     if pd.isna(val):
         return ""
     val_str = str(val).strip()
@@ -37,28 +36,13 @@ def clean_to_int_str(val):
     return val_str
 
 
-def clean_hour_val(val):
-    """时段清洗：将 15.0 或 '15' 转换为标准整数，异常值返回 None"""
-    if pd.isna(val):
-        return None
-    try:
-        val_str = str(val).strip()
-        if val_str.endswith('.0'):
-            val_str = val_str[:-2]
-        h = int(val_str)
-        if 0 <= h <= 23:
-            return h
-    except:
-        pass
-    return None
-
-
 def extract_hour_from_datetime(val):
-    """兜底时间提取：从 '2026-04-15 23:55:40' 中智能切出 23 点"""
+    """从标准呼叫时间字符串（如 '2026-04-15 23:58:43'）中精准切出小时"""
     if pd.isna(val):
         return None
     val_str = str(val).strip()
-    match = re.search(r'(\d{2}):\d{2}:\d{2}', val_str)
+    # 使用正则匹配类似 23:58:43 中的小时部分
+    match = re.search(r'(\d{1,2}):\d{2}:\d{2}', val_str)
     if match:
         try:
             h = int(match.group(1))
@@ -69,74 +53,67 @@ def extract_hour_from_datetime(val):
     return None
 
 
-# 核心数据清洗计算引擎
-def process_data(df_call, df_ext):
+# 统一的数据清洗计算引擎
+def process_data(df_raw, df_ext):
+    df_call = df_raw.copy()
     df_call.columns = df_call.columns.astype(str).str.strip()
     
-    required_call_cols = ['主叫号码', '通话状态', 'AI通话状态', '人工通话状态']
-    if any(col not in df_call.columns for col in required_call_cols):
+    # 基于真实底表字段进行严格校验
+    required_cols = ['主叫号码', '通话状态', 'AI通话状态', '人工通话状态', '呼叫时间']
+    if any(col not in df_call.columns for col in required_cols):
         return None
         
     df_call['主叫号码_clean'] = df_call['主叫号码'].apply(clean_to_int_str)
     valid_extensions = set(df_ext['分机号_clean'].dropna().unique())
     
-    # 判定客房接入
+    # 1. 判定客房接入
     df_call['房间是否接入'] = df_call['主叫号码_clean'].apply(
         lambda x: '客房' if (x and x in valid_extensions) else '--'
     )
     
-    # 判定最终成功接通
+    # 2. 从“呼叫时间”直接解析出标准小时
+    df_call['⚡标准时段'] = df_call['呼叫时间'].apply(extract_hour_from_datetime)
+
+    # 3. 判定最终成功接通
     def check_final_success(row):
-        if row['房间是否接入'] != '客房':
+        if row['房间是否接入'] != '客房': 
             return '--'
-        m = str(row['通话状态']).strip() if pd.notna(row['通话状态']) else '--'
-        n = str(row['AI通话状态']).strip() if pd.notna(row['AI通话状态']) else '--'
-        o = str(row['人工通话状态']).strip() if pd.notna(row['人工通话状态']) else '--'
-        if (m == '接通' and n == '接通' and o == '接通') or \
-           (m == '接通' and n == '接通' and o == '--') or \
-           (m == '接通' and n == '--' and o == '接通'):
+        m = str(row['通话状态']).strip()
+        n = str(row['AI通话状态']).strip()
+        o = str(row['人工通话状态']).strip()
+        
+        # 只要最终通话状态为接通，或者人工接通、AI接通，即视为成功
+        if m == '接通' or n == '接通' or o == '接通':
             return '是'
         return '否'
     df_call['最终成功接通'] = df_call.apply(check_final_success, axis=1)
     
-    # 判定接通方式（6个基本标签划分）
+    # 4. 判定接通方式划分
     def check_connect_type(row):
-        if row['房间是否接入'] != '客房':
+        if row['房间是否接入'] != '客房': 
             return '--'
-        m = str(row['通话状态']).strip() if pd.notna(row['通话状态']) else '--'
-        n = str(row['AI通话状态']).strip() if pd.notna(row['AI通话状态']) else '--'
-        o = str(row['人工通话状态']).strip() if pd.notna(row['人工通话状态']) else '--'
+        m = str(row['通话状态']).strip()
+        n = str(row['AI通话状态']).strip()
+        o = str(row['人工通话状态']).strip()
         
         if m == '接通' and n == '接通' and o == '接通':
             return '进入AI后，再转接人工，且人工接通'
         elif m == '接通' and n == '接通' and o == '未接通':
             return 'AI接通，转接人工，人工未接通'
-        elif m == '接通' and n == '接通' and o == '--':
+        elif m == '接通' and n == '接通' and (o == '--' or o == ''):
             return '进入AI后，AI直接完成，未转接人工'
-        elif m == '接通' and n == '--' and o == '接通':
+        elif m == '接通' and (n == '--' or n == '') and o == '接通':
             return '直接进入人工，且人工接通'
-        elif m == '未接通' and n == '--' and o == '--':
+        elif m == '未接通' and (n == '--' or n == '') and (o == '--' or o == ''):
             return '客人主动挂断'
-        elif m == '未接通' and n == '--' and o == '未接通':
+        elif m == '未接通' and (n == '--' or n == '') and o == '未接通':
             return '直接进入人工且最终未接通'
+        elif m == '接通' and (n == '--' or n == '') and (o == '--' or o == ''):
+            return '直接进入人工，且人工接通'
         else:
-            return '异常'
+            return '其他未划分场景'
             
     df_call['接通方式'] = df_call.apply(check_connect_type, axis=1)
-    
-    # 时段解析保险机制
-    hour_col = [c for c in df_call.columns if '小时' in c or '时段' in c or 'hour' in c.lower()]
-    if hour_col:
-        df_call['⚡标准时段'] = df_call[hour_col[0]].apply(clean_hour_val)
-    else:
-        df_call['⚡标准时段'] = None
-        
-    if df_call['⚡标准时段'].isna().all() or df_call['⚡标准时段'].isnull().all():
-        time_col = [c for c in df_call.columns if '时间' in c or 'date' in c.lower() or 'time' in c.lower()]
-        if time_col:
-            df_call['⚡标准时段'] = df_call[time_col[0]].apply(extract_hour_from_datetime)
-        
-    df_call = df_call.drop(columns=['主叫号码_clean'])
     return df_call
 
 
@@ -144,6 +121,7 @@ def process_data(df_call, df_ext):
 if uploaded_post_file and uploaded_ext_file:
     with st.spinner("双时段效益及24H时段多维对账中..."):
         try:
+            # 加载分机参考表
             if uploaded_ext_file.name.endswith('.csv'):
                 df_ext = pd.read_csv(uploaded_ext_file)
             else:
@@ -151,6 +129,7 @@ if uploaded_post_file and uploaded_ext_file:
             df_ext.columns = df_ext.columns.astype(str).str.strip()
             df_ext['分机号_clean'] = df_ext['分机号'].apply(clean_to_int_str)
             
+            # 加载上线后表格
             if uploaded_post_file.name.endswith('.csv'):
                 df_post_raw = pd.read_csv(uploaded_post_file)
             else:
@@ -159,51 +138,41 @@ if uploaded_post_file and uploaded_ext_file:
             df_post_res = process_data(df_post_raw, df_ext)
             
             if df_post_res is not None:
-                # 统一取客房数据
                 df_rooms_post = df_post_res[df_post_res['房间是否接入'] == '客房']
+                total_calls = len(df_rooms_post)
                 
-                # 🚀 重构大盘核心计算：基于清洗后的“接通方式”和“最终成功接通”
-                connect_types = df_rooms_post['接通方式'].str.strip()
-                valid_tags = [
-                    '进入AI后，AI直接完成，未转接人工', 
-                    'AI接通，转接人工，人工未接通', 
-                    '直接进入人工且最终未接通', 
-                    '进入AI后，再转接人工，且人工接通', 
-                    '直接进入人工，且人工接通', 
-                    '客人主动挂断'
-                ]
-                
-                # 总来电量 (属于客房且标签合法的总量)
-                total_calls = int(connect_types.isin(valid_tags).sum())
-                
-                # AI接通率（维持之前成功的逻辑）
+                # AI接通率
                 df_rooms_post['AI通话状态_clean'] = df_rooms_post['AI通话状态'].astype(str).str.strip()
                 ai_success = int((df_rooms_post['AI通话状态_clean'] == '接通').sum())
                 ai_total = int(df_rooms_post['AI通话状态_clean'].isin(['接通', '未接通']).sum())
                 ai_rate_str = f"{ai_success / ai_total:.1%}" if ai_total > 0 else "--"
-                is_ai_abnormal = (ai_success != ai_total)
+                is_ai_abnormal = (ai_success != ai_total) if ai_total > 0 else False
                 
                 # 上线后人工接通率
+                connect_types = df_rooms_post['接通方式'].str.strip()
                 man_success_post = int(connect_types.isin(['进入AI后，再转接人工，且人工接通', '直接进入人工，且人工接通']).sum())
                 man_total_post = int(connect_types.isin(['进入AI后，再转接人工，且人工接通', '直接进入人工，且人工接通', 'AI接通，转接人工，人工未接通', '直接进入人工且最终未接通']).sum())
                 online_man_rate_str = f"{man_success_post / man_total_post:.1%}" if man_total_post > 0 else "--"
                 
-                # 上线后整体接通率（人工+AI）
+                # 上线后整体接通率
                 final_success_count = int((df_rooms_post['最终成功接通'] == '是').sum())
                 overall_post_rate = final_success_count / total_calls if total_calls > 0 else 0.0
                 overall_post_rate_str = f"{overall_post_rate:.1%}" if total_calls > 0 else "--"
                 
-                # 初始化跨空间对账指标
                 pre_man_rate_str = "--"
                 lift_rate_str = "--"
                 saved_calls_str = "--"
                 
+                # 24小时表格初始化
                 hourly_summary = pd.DataFrame({"时段": [f"{i}:00" for i in range(24)], "⚡H_int": list(range(24))})
                 
+                # 上线后分时放量聚合
                 df_h_post = df_rooms_post[df_rooms_post['⚡标准时段'].notna()]
-                post_h_total = df_h_post[df_h_post['接通方式'].isin(valid_tags)].groupby('⚡标准时段').size()
+                post_h_total = df_h_post.groupby('⚡标准时段').size()
                 post_h_success = df_h_post[df_h_post['最终成功接通'] == '是'].groupby('⚡标准时段').size()
                 
+                # 计算上线前历史数据
+                pre_h_total, pre_h_success = {}, {}
                 if uploaded_pre_file:
                     if uploaded_pre_file.name.endswith('.csv'):
                         df_pre_raw = pd.read_csv(uploaded_pre_file)
@@ -214,59 +183,52 @@ if uploaded_post_file and uploaded_ext_file:
                     if df_pre_res is not None:
                         df_rooms_pre = df_pre_res[df_pre_res['房间是否接入'] == '客房']
                         
-                        df_rooms_pre['人工通话状态_clean'] = df_rooms_pre['人工通话状态'].astype(str).str.strip()
-                        pre_success = int((df_rooms_pre['人工通话状态_clean'] == '接通').sum())
-                        pre_failed = int((df_rooms_pre['人工通话状态_clean'] == '未接通').sum())
-                        pre_total = pre_success + pre_failed
+                        pre_success = int((df_rooms_pre['最终成功接通'] == '是').sum())
+                        pre_total = len(df_rooms_pre)
                         
                         if pre_total > 0:
                             overall_pre_rate = pre_success / pre_total
                             pre_man_rate_str = f"{overall_pre_rate:.1%}"
                             lift_value = overall_post_rate - overall_pre_rate
                             lift_rate_str = f"{lift_value:.1%}"
-                            saved_calls = int(round(total_calls * lift_value))
-                            saved_calls_str = f"{saved_calls}.0"
+                            saved_calls_str = f"{int(round(total_calls * lift_value))}.0"
                         
+                        # 上线前分时聚合
                         df_h_pre = df_rooms_pre[df_rooms_pre['⚡标准时段'].notna()]
-                        pre_h_success = df_h_pre[df_h_pre['人工通话状态_clean'] == '接通'].groupby('⚡标准时段').size()
-                        pre_h_failed = df_h_pre[df_h_pre['人工通话状态_clean'] == '未接通'].groupby('⚡标准时段').size()
-                        pre_h_total = pre_h_success + pre_h_failed
+                        pre_h_total = df_h_pre.groupby('⚡标准时段').size()
+                        pre_h_success = df_h_pre[df_h_pre['最终成功接通'] == '是'].groupby('⚡标准时段').size()
                 
+                # 双流合并填充
                 def get_rates(row):
                     h = row['⚡H_int']
-                    pre_t = pre_h_total.get(h, 0) if 'pre_h_total' in locals() else 0
-                    pre_s = pre_h_success.get(h, 0) if 'pre_h_success' in locals() else 0
-                    rate_pre = f"{pre_s / pre_t:.1%}" if pre_t > 0 else "--"
+                    t_pre = pre_h_total.get(h, 0)
+                    s_pre = pre_h_success.get(h, 0)
+                    rate_pre = f"{s_pre / t_pre:.1%}" if t_pre > 0 else "--"
                     
-                    post_t = post_h_total.get(h, 0)
-                    post_s = post_h_success.get(h, 0)
-                    rate_post = f"{post_s / post_t:.1%}" if post_t > 0 else "--"
+                    t_post = post_h_total.get(h, 0)
+                    s_post = post_h_success.get(h, 0)
+                    rate_post = f"{s_post / t_post:.1%}" if t_post > 0 else "--"
                     return pd.Series([rate_pre, rate_post])
                 
                 hourly_summary[['整体接通率（人工）[上线前]', '整体接通率（人工+AI）[上线后]']] = hourly_summary.apply(get_rates, axis=1)
                 hourly_display = hourly_summary.drop(columns=['⚡H_int'])
                 
-                # --- 🎛️ 前端卡片渲染 ---
+                # --- 前端卡片渲染 ---
                 st.markdown("### 📞 PART1：酒店电话数据")
                 st.info(f"**总来电量（所有启用AI的客房呼出的电话量）：{total_calls}**")
                 
                 st.markdown("#### **电话接通率情况**")
                 col_b1, col_b2, col_b3, col_b4, col_b5, col_b6 = st.columns(6)
-                with col_b1:
-                    st.metric(label="上线前整体接通率（人工）", value=pre_man_rate_str)
-                with col_b2:
-                    st.metric(label="上线后人工接通率", value=online_man_rate_str)
+                with col_b1: st.metric(label="上线前整体接通率（人工）", value=pre_man_rate_str)
+                with col_b2: st.metric(label="上线后人工接通率", value=online_man_rate_str)
                 with col_b3:
                     if is_ai_abnormal:
                         st.markdown(f"<div style='background-color:#FFD2D2; padding:5px; border-radius:5px; border-left:3px solid #FF0000;'><p style='margin:0; color:#550000; font-size:14px;'>AI接通率</p><h3 style='margin:5px 0 0 0; color:#CC0000;'>{ai_rate_str}</h3></div>", unsafe_allow_html=True)
                     else:
                         st.metric(label="AI接通率", value=ai_rate_str)
-                with col_b4:
-                    st.metric(label="上线后整体接通率（人工+AI）", value=overall_post_rate_str)
-                with col_b5:
-                    st.metric(label="整体接通率提升", value=lift_rate_str)
-                with col_b6:
-                    st.metric(label="减少电话漏接量", value=saved_calls_str)
+                with col_b4: st.metric(label="上线后整体接通率（人工+AI）", value=overall_post_rate_str)
+                with col_b5: st.metric(label="整体接通率提升", value=lift_rate_str)
+                with col_b6: st.metric(label="减少电话漏接量", value=saved_calls_str)
                 
                 st.markdown("---")
                 st.markdown("#### ⏰ 24小时分时段接通率精细分析情况")
@@ -286,7 +248,7 @@ if uploaded_post_file and uploaded_ext_file:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
-                st.error("❌ 详单解析失败，请检查‘主叫号码’、‘通话状态’、‘AI通话状态’、‘人工通话状态’等必填核心列名是否完全吻合。")
+                st.error("❌ 详单解析失败，请检查基础列名是否完全吻合。")
         except Exception as e:
             st.error(f"分析处理发生非预期异常: {e}")
 else:
