@@ -8,7 +8,7 @@ import re
 st.set_page_config(page_title="语音数据智能分析工具", layout="wide")
 
 st.title("📊 南京金鹰世界G酒店-语音运营数据分析")
-st.markdown("页面已完全对齐真实底表字段，并新增24H分时【整体接通率提升】多维对账指标。")
+st.markdown("页面已启用会话隔离沙盒（Session State），确保多用户并发数据的绝对稳妥与安全。")
 
 # ----------------- 🛠️ 数据矩阵上传区 -----------------
 st.markdown("### 📥 数据矩阵上传中心")
@@ -52,12 +52,12 @@ def extract_hour_from_datetime(val):
     return None
 
 
-# 统一的数据清洗计算引擎
+# 统一的数据清洗计算引擎（返回带派生列的 DataFrame）
 def process_data(df_raw, df_ext):
     df_call = df_raw.copy()
     df_call.columns = df_call.columns.astype(str).str.strip()
     
-    # 严格校验
+    # 严格校验最底层的原始字段
     required_cols = ['主叫号码', '通话状态', 'AI通话状态', '人工通话状态', '呼叫时间']
     if any(col not in df_call.columns for col in required_cols):
         return None
@@ -70,7 +70,7 @@ def process_data(df_raw, df_ext):
         lambda x: '客房' if (x and x in valid_extensions) else '--'
     )
     
-    # 2. 从“呼叫时间”直接解析出标准小时
+    # 2. 影子时间衍化：从“呼叫时间”直接解析出标准小时
     df_call['⚡标准时段'] = df_call['呼叫时间'].apply(extract_hour_from_datetime)
 
     # 3. 判定最终成功接通
@@ -119,7 +119,7 @@ def process_data(df_raw, df_ext):
 if uploaded_post_file and uploaded_ext_file:
     with st.spinner("双时段效益及24H时段多维对账中..."):
         try:
-            # 加载分机参考表
+            # 1. 动态加载分机参考表
             if uploaded_ext_file.name.endswith('.csv'):
                 df_ext = pd.read_csv(uploaded_ext_file)
             else:
@@ -127,32 +127,33 @@ if uploaded_post_file and uploaded_ext_file:
             df_ext.columns = df_ext.columns.astype(str).str.strip()
             df_ext['分机号_clean'] = df_ext['分机号'].apply(clean_to_int_str)
             
-            # 加载上线后表格
+            # 2. 动态加载并清洗上线后数据
             if uploaded_post_file.name.endswith('.csv'):
                 df_post_raw = pd.read_csv(uploaded_post_file)
             else:
                 df_post_raw = pd.read_excel(uploaded_post_file)
                 
-            df_post_res = process_data(df_post_raw, df_ext)
+            # 将派生出来的多列安全储存在当前用户的 Session 沙盒中
+            st.session_state['df_post_res'] = process_data(df_post_raw, df_ext)
             
-            if df_post_res is not None:
-                df_rooms_post = df_post_res[df_post_res['房间是否接入'] == '客房']
+            if st.session_state['df_post_res'] is not None:
+                df_rooms_post = st.session_state['df_post_res'][st.session_state['df_post_res']['房间是否接入'] == '客房']
                 total_calls = len(df_rooms_post)
                 
-                # AI接通率
+                # 大盘核心指标：AI接通率
                 df_rooms_post['AI通话状态_clean'] = df_rooms_post['AI通话状态'].astype(str).str.strip()
                 ai_success = int((df_rooms_post['AI通话状态_clean'] == '接通').sum())
                 ai_total = int(df_rooms_post['AI通话状态_clean'].isin(['接通', '未接通']).sum())
                 ai_rate_str = f"{ai_success / ai_total:.1%}" if ai_total > 0 else "--"
                 is_ai_abnormal = (ai_success != ai_total) if ai_total > 0 else False
                 
-                # 上线后人工接通率
+                # 大盘核心指标：上线后人工接通率
                 connect_types = df_rooms_post['接通方式'].str.strip()
                 man_success_post = int(connect_types.isin(['进入AI后，再转接人工，且人工接通', '直接进入人工，且人工接通']).sum())
                 man_total_post = int(connect_types.isin(['进入AI后，再转接人工，且人工接通', '直接进入人工，且人工接通', 'AI接通，转接人工，人工未接通', '直接进入人工且最终未接通']).sum())
                 online_man_rate_str = f"{man_success_post / man_total_post:.1%}" if man_total_post > 0 else "--"
                 
-                # 上线后整体接通率
+                # 大盘核心指标：上线后整体接通率
                 final_success_count = int((df_rooms_post['最终成功接通'] == '是').sum())
                 overall_post_rate = final_success_count / total_calls if total_calls > 0 else 0.0
                 overall_post_rate_str = f"{overall_post_rate:.1%}" if total_calls > 0 else "--"
@@ -161,15 +162,15 @@ if uploaded_post_file and uploaded_ext_file:
                 lift_rate_str = "--"
                 saved_calls_str = "--"
                 
-                # 24小时表格初始化
+                # 24小时分时大盘初始化
                 hourly_summary = pd.DataFrame({"时段": [f"{i}:00" for i in range(24)], "⚡H_int": list(range(24))})
                 
-                # 上线后分时放量聚合
+                # 上线后分时放量矩阵聚合
                 df_h_post = df_rooms_post[df_rooms_post['⚡标准时段'].notna()]
                 post_h_total = df_h_post.groupby('⚡标准时段').size()
                 post_h_success = df_h_post[df_h_post['最终成功接通'] == '是'].groupby('⚡标准时段').size()
                 
-                # 计算上线前历史数据
+                # 3. 动态加载并清洗上线前历史数据（可选）
                 pre_h_total, pre_h_success = {}, {}
                 if uploaded_pre_file:
                     if uploaded_pre_file.name.endswith('.csv'):
@@ -177,9 +178,9 @@ if uploaded_post_file and uploaded_ext_file:
                     else:
                         df_pre_raw = pd.read_excel(uploaded_pre_file)
                         
-                    df_pre_res = process_data(df_pre_raw, df_ext)
-                    if df_pre_res is not None:
-                        df_rooms_pre = df_pre_res[df_pre_res['房间是否接入'] == '客房']
+                    st.session_state['df_pre_res'] = process_data(df_pre_raw, df_ext)
+                    if st.session_state['df_pre_res'] is not None:
+                        df_rooms_pre = st.session_state['df_pre_res'][st.session_state['df_pre_res']['房间是否接入'] == '客房']
                         
                         pre_success = int((df_rooms_pre['最终成功接通'] == '是').sum())
                         pre_total = len(df_rooms_pre)
@@ -196,7 +197,7 @@ if uploaded_post_file and uploaded_ext_file:
                         pre_h_total = df_h_pre.groupby('⚡标准时段').size()
                         pre_h_success = df_h_pre[df_h_pre['最终成功接通'] == '是'].groupby('⚡标准时段').size()
                 
-                # 核心：多维对账双流合并填充（含分时提升率计算）
+                # 4. 双流精细对账：合并填充 24H 矩阵
                 def get_rates(row):
                     h = row['⚡H_int']
                     t_pre = pre_h_total.get(h, 0)
@@ -205,32 +206,43 @@ if uploaded_post_file and uploaded_ext_file:
                     t_post = post_h_total.get(h, 0)
                     s_post = post_h_success.get(h, 0)
                     
-                    # 基础率计算
                     r_pre_val = s_pre / t_pre if t_pre > 0 else None
                     r_post_val = s_post / t_post if t_post > 0 else None
                     
                     rate_pre_str = f"{r_pre_val:.1%}" if r_pre_val is not None else "--"
                     rate_post_str = f"{r_post_val:.1%}" if r_post_val is not None else "--"
                     
-                    # 动态计算分时【整体接通率提升】及视觉符号拼接
+                    # 提升率与减少漏接量联动计算
                     if r_pre_val is not None and r_post_val is not None:
                         diff = r_post_val - r_pre_val
+                        # A. 提升率显性格式化
                         if diff > 0:
-                            rate_lift_str = f"↑ {diff:.1%}"  # 上涨：左侧上升箭头
+                            rate_lift_str = f"↑ {diff:.1%}"
                         elif diff < 0:
-                            rate_lift_str = f"{diff:.1%} ↓"  # 下降：右侧下降箭头
+                            rate_lift_str = f"{diff:.1%} ↓"
                         else:
                             rate_lift_str = "0.0%"
+                        
+                        # B. 新增：分时减少电话漏接量 = 提升率 * 上线后该时段总来电量
+                        saved_val = diff * t_post
+                        saved_calls_hour_str = f"{saved_val:.1f}"
                     else:
                         rate_lift_str = "--"
+                        saved_calls_hour_str = "--"
                         
-                    return pd.Series([rate_pre_str, rate_post_str, rate_lift_str])
+                    return pd.Series([rate_pre_str, rate_post_str, rate_lift_str, saved_calls_hour_str])
                 
-                # 严格按照需求指定的列名和顺序进行映射
-                hourly_summary[['整体接通率（人工）[上线前]', '整体接通率（人工+AI）[上线后]', '整体接通率提升（上线后）']] = hourly_summary.apply(get_rates, axis=1)
+                # 严格按照业务映射指定的列顺序
+                hourly_summary[[
+                    '整体接通率（人工）[上线前]', 
+                    '整体接通率（人工+AI）[上线后]', 
+                    '整体接通率提升（上线后）',
+                    '减少电话漏接量（通）'
+                ]] = hourly_summary.apply(get_rates, axis=1)
+                
                 hourly_display = hourly_summary.drop(columns=['⚡H_int'])
                 
-                # --- 前端卡片渲染 ---
+                # --- 前端大盘看板渲染 ---
                 st.markdown("### 📞 PART1：酒店电话数据")
                 st.info(f"**总来电量（所有启用AI的客房呼出的电话量）：{total_calls}**")
                 
@@ -251,12 +263,13 @@ if uploaded_post_file and uploaded_ext_file:
                 st.markdown("#### ⏰ 24小时分时段接通率精细分析情况")
                 st.dataframe(hourly_display, use_container_width=True)
                 
+                # Excel 影子数据全链路留底导出机制
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     hourly_display.to_excel(writer, sheet_name="24小时分时段看板", index=False)
-                    df_post_res.to_excel(writer, sheet_name="上线后明细详单", index=False)
-                    if uploaded_pre_file and 'df_pre_res' in locals():
-                        df_pre_res.to_excel(writer, sheet_name="上线前明细详单", index=False)
+                    st.session_state['df_post_res'].to_excel(writer, sheet_name="上线后明细详单", index=False)
+                    if uploaded_pre_file and 'df_pre_res' in st.session_state:
+                        st.session_state['df_pre_res'].to_excel(writer, sheet_name="上线前明细详单", index=False)
                         
                 st.download_button(
                     label="📥 导出带24小时分时分析的全量 Excel",
