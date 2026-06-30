@@ -269,7 +269,7 @@ if uploaded_post_file and uploaded_ext_file:
                 
                 st.markdown("---")
                 st.markdown("#### ⏰ 分时段接通率情况")
-                st.dataframe(df_web_display, use_container_width=True)
+                st.dataframe(df_web_display, width='stretch')
                 
                 # ----------------- 🎨 网页端交互图表绘制 (Plotly) -----------------
                 st.markdown("#### 📉 分时段接通率趋势与挽回话务复盘画布")
@@ -308,7 +308,7 @@ if uploaded_post_file and uploaded_ext_file:
                     yaxis2=dict(title="减少电话漏接量 (通)", overlaying="y", side="right", showgrid=False),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 
                 # ----------------- 🛠️ Excel 原生双轴图表终极修复 -----------------
                 excel_buffer = io.BytesIO()
